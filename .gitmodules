@@ -1,3 +1,0 @@
-[submodule "log-anomaly-detection"]
-	path = log-anomaly-detection
-	url = https://github.com/dvolaid-oss/log-anomaly-detection.git
