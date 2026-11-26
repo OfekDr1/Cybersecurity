@@ -1,0 +1,55 @@
+# Config for the HDFS 2k sample (LogHub GitHub, 2,000 lines, NO labels).
+# Small and fast: good for trying commands and for development. Use configs/hdfs.yaml for
+# real results, because only the full dataset has anomaly labels.
+
+dataset: hdfs                     # same format as the full dataset → same adapter
+seed: 42
+
+paths:
+  raw_dir: data/raw/hdfs_sample
+  artifacts_dir: artifacts/hdfs_sample
+  reports_dir: reports/hdfs_sample
+
+data:
+  files:
+    # Pinned to a fixed commit, so the file can never change under us.
+    - url: https://raw.githubusercontent.com/logpai/loghub/374038faa4ca122dd7ca0730372c0b78f76f8597/HDFS/HDFS_2k.log
+      filename: HDFS_2k.log
+      checksum: sha256:7c967000980c086ed55fa6544ba4f05fe66d44622795e890c68caf8bbb635035
+    # LogHub's hand-checked template for every line: used to score our parser (Stage 2).
+    - url: https://raw.githubusercontent.com/logpai/loghub/374038faa4ca122dd7ca0730372c0b78f76f8597/HDFS/HDFS_2k.log_structured.csv
+      filename: HDFS_2k.log_structured.csv
+      checksum: sha256:729df59774e3dde934044028546d2a55d5e3d4370b9d12fcebbe4c087b2bf7b4
+  log_file: HDFS_2k.log
+  label_file: null                # the sample has no labels
+  truth_file: HDFS_2k.log_structured.csv   # ground-truth templates → parsing accuracy
+
+grouping:
+  method: session
+
+parsing:                          # Stage 2: masking + Drain log parser
+  sim_threshold: 0.4              # share of tokens that must match to join a template
+  depth: 4                        # depth of Drain's parse tree
+  masks:                          # regexes replaced BEFORE Drain, in this order
+    - name: BLK                   # HDFS block ID(s): blk_-1608999687919862906, or a list of them
+      pattern: 'blk_-?\d+( +blk_-?\d+)*'   # a list of blocks is ONE variable
+    - name: IP                    # IPv4 with optional port, e.g. 10.250.19.102:54106
+      pattern: '(\d+\.){3}\d+(:\d+)?'
+    - name: NUM                   # any remaining number (sizes, thread IDs, ...)
+      pattern: '\d+'
+
+features:                         # Stage 3: event-count matrix per block
+  type: event_count               # event_count | tfidf (IDF weights learned on train only)
+  scale: false                    # true → zero mean, unit variance per event (train only)
+  split:                          # by TIME (block's first line): train, validation, test
+    train: 0.6                    # oldest 60%: models learn from this
+    validation: 0.2               # next 20%: pick alert thresholds (Stage 5); test = rest
+
+models:                           # Stage 4: fitted on the TRAIN split only, never on labels
+  baseline: {}                    # rare-event rule: score = rarity of the block's rarest event
+  pca:                            # Xu et al. 2009: score = error rebuilding the block
+    transform: tfidf              # per-model override of features.type (rare events count more)
+    variance_kept: 0.95           # keep components explaining 95% of normal variance
+  isolation_forest:               # score = how quickly random splits isolate the block
+    transform: event_count
+    n_estimators: 100
